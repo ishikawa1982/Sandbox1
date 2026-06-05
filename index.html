@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ピクロス - ノノグラムパズル</title>
+<style>
+  :root {
+    --bg: #1e2233;
+    --panel: #2a2f45;
+    --accent: #5b8def;
+    --accent-2: #f5a623;
+    --line: #3a4060;
+    --cell: #f4f6fb;
+    --cell-fill: #2c3147;
+    --text: #e6e9f2;
+    --muted: #9aa3c0;
+    --hint-bg: #20243a;
+    --error: #e0556b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    background: linear-gradient(160deg, #171a28, #232843);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 12px 48px;
+  }
+  h1 {
+    font-size: 1.7rem;
+    margin: 8px 0 4px;
+    letter-spacing: 0.05em;
+  }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 18px; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .seg {
+    display: inline-flex;
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 4px;
+    gap: 4px;
+  }
+  .seg button, .btn {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.92rem;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .seg button.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .seg button:hover:not(.active) { color: var(--text); }
+  .btn {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .btn:hover { background: #353b57; }
+  .btn.primary { background: var(--accent-2); color: #1c1300; font-weight: 600; }
+  .btn.primary:hover { background: #ffb733; }
+
+  .status {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 14px;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .status b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .mode-hint {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 14px;
+    text-align: center;
+    max-width: 480px;
+    line-height: 1.5;
+  }
+  .mode-hint kbd {
+    background: var(--panel);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: inherit;
+    font-size: 0.78rem;
+    border: 1px solid var(--line);
+  }
+
+  .board-wrap {
+    background: var(--panel);
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+    overflow: auto;
+    max-width: 100%;
+  }
+  table.board { border-collapse: collapse; margin: 0 auto; }
+  table.board td { padding: 0; text-align: center; }
+
+  /* hint cells */
+  .corner { background: transparent; }
+  .col-hint, .row-hint {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+    background: var(--hint-bg);
+  }
+  .col-hint {
+    vertical-align: bottom;
+    padding: 4px 0 6px !important;
+    line-height: 1.25;
+    font-weight: 500;
+  }
+  .col-hint div { font-size: var(--hint-size); }
+  .row-hint {
+    text-align: right !important;
+    padding: 0 8px 0 6px !important;
+    white-space: nowrap;
+    font-weight: 500;
+    font-size: var(--hint-size);
+  }
+  .row-hint span, .col-hint div span { display: inline-block; min-width: 1em; }
+  .hint-done { color: var(--muted); opacity: 0.5; }
+
+  /* play cells */
+  .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    background: var(--cell);
+    border: 1px solid #cfd6e8;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    transition: background 0.05s;
+  }
+  .cell.filled { background: var(--cell-fill); border-color: var(--cell-fill); }
+  .cell.marked::after {
+    content: "✕";
+    color: var(--error);
+    font-size: calc(var(--cell-size) * 0.55);
+    line-height: var(--cell-size);
+    font-weight: bold;
+  }
+  /* thicker borders every 5 cells */
+  .cell.block-right { border-right: 2px solid #8b95b8; }
+  .cell.block-bottom { border-bottom: 2px solid #8b95b8; }
+  .cell.block-left { border-left: 2px solid #8b95b8; }
+  .cell.block-top { border-top: 2px solid #8b95b8; }
+
+  .board.locked .cell { cursor: default; }
+
+  .win-banner {
+    margin-top: 18px;
+    padding: 14px 22px;
+    background: linear-gradient(120deg, #2e8b57, #3cb371);
+    border-radius: 12px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    animation: pop 0.4s ease;
+  }
+  .win-banner.show { display: flex; }
+  @keyframes pop {
+    0% { transform: scale(0.8); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  footer { margin-top: 28px; color: var(--muted); font-size: 0.75rem; }
+</style>
+</head>
+<body>
+  <h1>ピクロス</h1>
+  <div class="subtitle">ノノグラム / お絵かきロジック</div>
+
+  <div class="controls">
+    <div class="seg" id="sizeSeg">
+      <button data-size="5" class="active">5 × 5</button>
+      <button data-size="10">10 × 10</button>
+      <button data-size="15">15 × 15</button>
+    </div>
+    <button class="btn primary" id="newBtn">新しい問題</button>
+    <button class="btn" id="checkBtn">答え合わせ</button>
+    <button class="btn" id="resetBtn">リセット</button>
+    <button class="btn" id="solveBtn">解答を表示</button>
+  </div>
+
+  <div class="status">
+    <div>サイズ: <b id="statSize">5 × 5</b></div>
+    <div>時間: <b id="statTime">00:00</b></div>
+    <div>進捗: <b id="statProgress">0%</b></div>
+  </div>
+
+  <div class="mode-hint">
+    左クリック: 塗る／消す　・　右クリック: ✕印（空白マーク）<br>
+    ドラッグで連続して塗れます。行・列のヒント数字を満たすように塗りましょう。
+  </div>
+
+  <div class="board-wrap">
+    <table class="board" id="board"></table>
+  </div>
+
+  <div class="win-banner" id="winBanner">🎉 クリア！ おめでとうございます！</div>
+
+  <footer>ランダム生成ピクロス &middot; 自作問題で遊べます</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  const EMPTY = 0, FILLED = 1, MARKED = 2;
+
+  let size = 5;
+  let solution = [];      // 0/1 the answer
+  let state = [];         // EMPTY/FILLED/MARKED player input
+  let rowHints = [];
+  let colHints = [];
+  let locked = false;
+  let timer = null;
+  let seconds = 0;
+  let started = false;
+
+  // drag state
+  let dragging = false;
+  let dragButton = 0;     // 0 left, 2 right
+  let dragSetValue = null; // value we are applying during a drag
+
+  const boardEl = document.getElementById("board");
+  const winBanner = document.getElementById("winBanner");
+
+  // ---- puzzle generation ----------------------------------------------------
+  function fillRatio(n) {
+    // a pleasant density that scales a bit with size
+    if (n <= 5) return 0.55;
+    if (n <= 10) return 0.52;
+    return 0.50;
+  }
+
+  function generateSolution(n) {
+    const ratio = fillRatio(n);
+    let grid;
+    let attempts = 0;
+    do {
+      grid = [];
+      for (let r = 0; r < n; r++) {
+        const row = [];
+        for (let c = 0; c < n; c++) {
+          row.push(Math.random() < ratio ? 1 : 0);
+        }
+        grid.push(row);
+      }
+      attempts++;
+    } while (!hasContent(grid) && attempts < 50);
+
+    // Guarantee no fully-empty rows/cols so hints aren't all zeros for too many lines
+    return grid;
+  }
+
+  function hasContent(grid) {
+    let count = 0;
+    for (const row of grid) for (const v of row) count += v;
+    return count >= Math.max(2, Math.floor(grid.length * grid.length * 0.15));
+  }
+
+  function lineHints(line) {
+    const hints = [];
+    let run = 0;
+    for (const v of line) {
+      if (v === 1) run++;
+      else { if (run > 0) hints.push(run); run = 0; }
+    }
+    if (run > 0) hints.push(run);
+    return hints.length ? hints : [0];
+  }
+
+  function computeHints() {
+    rowHints = [];
+    colHints = [];
+    for (let r = 0; r < size; r++) {
+      rowHints.push(lineHints(solution[r]));
+    }
+    for (let c = 0; c < size; c++) {
+      const col = [];
+      for (let r = 0; r < size; r++) col.push(solution[r][c]);
+      colHints.push(lineHints(col));
+    }
+  }
+
+  // ---- build the board ------------------------------------------------------
+  function newPuzzle() {
+    solution = generateSolution(size);
+    computeHints();
+    state = [];
+    for (let r = 0; r < size; r++) {
+      state.push(new Array(size).fill(EMPTY));
+    }
+    locked = false;
+    started = false;
+    seconds = 0;
+    stopTimer();
+    updateTime();
+    winBanner.classList.remove("show");
+    render();
+    updateProgress();
+  }
+
+  function cellSizePx() {
+    if (size <= 5) return 42;
+    if (size <= 10) return 34;
+    return 26;
+  }
+  function hintSizePx() {
+    if (size <= 5) return "0.95rem";
+    if (size <= 10) return "0.8rem";
+    return "0.68rem";
+  }
+
+  function render() {
+    document.documentElement.style.setProperty("--cell-size", cellSizePx() + "px");
+    document.documentElement.style.setProperty("--hint-size", hintSizePx());
+
+    const maxRowHints = Math.max(...rowHints.map(h => h.length));
+    const maxColHints = Math.max(...colHints.map(h => h.length));
+
+    let html = "";
+
+    // top hint rows (column hints), aligned to bottom
+    for (let hr = 0; hr < maxColHints; hr++) {
+      html += "<tr>";
+      // corner
+      if (hr === 0) {
+        html += `<td class="corner" colspan="1" rowspan="${maxColHints}"></td>`;
+      }
+      for (let c = 0; c < size; c++) {
+        const hints = colHints[c];
+        const offset = maxColHints - hints.length;
+        const idx = hr - offset;
+        const blockClass = ((c + 1) % 5 === 0 && c !== size - 1) ? " block-right" : "";
+        let inner = "";
+        if (idx >= 0) {
+          inner = `<span data-ci="${c}" data-hi="${idx}">${hints[idx]}</span>`;
+        }
+        html += `<td class="col-hint${blockClass}"><div>${inner}</div></td>`;
+      }
+      html += "</tr>";
+    }
+
+    // play rows
+    for (let r = 0; r < size; r++) {
+      html += "<tr>";
+      // row hints
+      const rh = rowHints[r];
+      let rhInner = rh.map((v, i) => `<span data-ri="${r}" data-hi="${i}">${v}</span>`).join(" ");
+      const blockBottomHint = ((r + 1) % 5 === 0 && r !== size - 1) ? " block-bottom" : "";
+      html += `<td class="row-hint${blockBottomHint}">${rhInner}</td>`;
+
+      for (let c = 0; c < size; c++) {
+        let cls = "cell";
+        if ((c + 1) % 5 === 0 && c !== size - 1) cls += " block-right";
+        if ((r + 1) % 5 === 0 && r !== size - 1) cls += " block-bottom";
+        html += `<td class="${cls}" data-r="${r}" data-c="${c}"></td>`;
+      }
+      html += "</tr>";
+    }
+
+    boardEl.innerHTML = html;
+    boardEl.classList.toggle("locked", locked);
+    refreshCells();
+    updateHintStrike();
+  }
+
+  function refreshCells() {
+    const cells = boardEl.querySelectorAll(".cell");
+    cells.forEach(td => {
+      const r = +td.dataset.r, c = +td.dataset.c;
+      td.classList.toggle("filled", state[r][c] === FILLED);
+      td.classList.toggle("marked", state[r][c] === MARKED);
+    });
+  }
+
+  // ---- interaction ----------------------------------------------------------
+  function applyCell(r, c, value) {
+    if (locked) return;
+    if (state[r][c] === value) return;
+    state[r][c] = value;
+    ensureTimer();
+    refreshCells();
+    updateHintStrike();
+    updateProgress();
+    checkWin();
+  }
+
+  function cellFromEvent(e) {
+    const td = e.target.closest(".cell");
+    if (!td) return null;
+    return { td, r: +td.dataset.r, c: +td.dataset.c };
+  }
+
+  boardEl.addEventListener("mousedown", (e) => {
+    if (locked) return;
+    const hit = cellFromEvent(e);
+    if (!hit) return;
+    e.preventDefault();
+    dragging = true;
+    dragButton = e.button;
+    const cur = state[hit.r][hit.c];
+    if (e.button === 2) {
+      // right click toggles mark
+      dragSetValue = (cur === MARKED) ? EMPTY : MARKED;
+    } else {
+      // left click toggles fill
+      dragSetValue = (cur === FILLED) ? EMPTY : FILLED;
+    }
+    applyCell(hit.r, hit.c, dragSetValue);
+  });
+
+  boardEl.addEventListener("mouseover", (e) => {
+    if (!dragging) return;
+    const hit = cellFromEvent(e);
+    if (!hit) return;
+    applyCell(hit.r, hit.c, dragSetValue);
+  });
+
+  window.addEventListener("mouseup", () => {
+    dragging = false;
+    dragSetValue = null;
+  });
+
+  boardEl.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // touch support (tap to fill, long press to mark)
+  let touchTimer = null;
+  let touchMarked = false;
+  boardEl.addEventListener("touchstart", (e) => {
+    if (locked) return;
+    const t = e.touches[0];
+    const el = document.elementFromPoint(t.clientX, t.clientY);
+    const td = el && el.closest ? el.closest(".cell") : null;
+    if (!td) return;
+    const r = +td.dataset.r, c = +td.dataset.c;
+    touchMarked = false;
+    touchTimer = setTimeout(() => {
+      touchMarked = true;
+      const cur = state[r][c];
+      applyCell(r, c, cur === MARKED ? EMPTY : MARKED);
+    }, 350);
+    td._touchRC = { r, c };
+  }, { passive: true });
+
+  boardEl.addEventListener("touchend", (e) => {
+    if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+    if (touchMarked) { touchMarked = false; return; }
+    const el = e.target.closest ? e.target.closest(".cell") : null;
+    if (!el) return;
+    const r = +el.dataset.r, c = +el.dataset.c;
+    const cur = state[r][c];
+    applyCell(r, c, cur === FILLED ? EMPTY : FILLED);
+  });
+
+  // ---- win / hint logic -----------------------------------------------------
+  function checkWin() {
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const shouldFill = solution[r][c] === 1;
+        const isFilled = state[r][c] === FILLED;
+        if (shouldFill !== isFilled) return false;
+      }
+    }
+    win();
+    return true;
+  }
+
+  function win() {
+    locked = true;
+    stopTimer();
+    boardEl.classList.add("locked");
+    // clear stray marks for a clean picture
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        if (state[r][c] === MARKED) state[r][c] = EMPTY;
+    refreshCells();
+    winBanner.textContent = `🎉 クリア！ タイム ${formatTime(seconds)}`;
+    winBanner.classList.add("show");
+  }
+
+  // strike-through hints whose line currently matches
+  function currentLineFilled(getter) {
+    const arr = [];
+    for (let i = 0; i < size; i++) arr.push(getter(i) === FILLED ? 1 : 0);
+    return lineHints(arr);
+  }
+
+  function arraysEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function updateHintStrike() {
+    // rows
+    for (let r = 0; r < size; r++) {
+      const got = currentLineFilled(i => state[r][i]);
+      const done = arraysEqual(got, rowHints[r]);
+      boardEl.querySelectorAll(`.row-hint span[data-ri="${r}"]`).forEach(s => {
+        s.parentElement; s.classList.toggle("hint-done", done);
+      });
+    }
+    // cols
+    for (let c = 0; c < size; c++) {
+      const got = currentLineFilled(i => state[i][c]);
+      const done = arraysEqual(got, colHints[c]);
+      boardEl.querySelectorAll(`.col-hint span[data-ci="${c}"]`).forEach(s => {
+        s.classList.toggle("hint-done", done);
+      });
+    }
+  }
+
+  // ---- answer check ---------------------------------------------------------
+  function checkAnswer() {
+    if (locked) return;
+    let wrong = 0;
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++) {
+        const shouldFill = solution[r][c] === 1;
+        const isFilled = state[r][c] === FILLED;
+        if (shouldFill !== isFilled) wrong++;
+      }
+    if (wrong === 0) {
+      win();
+    } else {
+      winBanner.textContent = `まだ ${wrong} マス違います。もう少し！`;
+      winBanner.classList.remove("show");
+      winBanner.style.background = "linear-gradient(120deg,#b5483f,#d36055)";
+      winBanner.classList.add("show");
+      setTimeout(() => {
+        winBanner.classList.remove("show");
+        winBanner.style.background = "";
+      }, 1800);
+    }
+  }
+
+  function showSolution() {
+    locked = true;
+    stopTimer();
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        state[r][c] = solution[r][c] === 1 ? FILLED : EMPTY;
+    boardEl.classList.add("locked");
+    refreshCells();
+    updateHintStrike();
+    updateProgress();
+    winBanner.textContent = "解答を表示しました";
+    winBanner.style.background = "linear-gradient(120deg,#555b7a,#6b7295)";
+    winBanner.classList.add("show");
+  }
+
+  function resetBoard() {
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        state[r][c] = EMPTY;
+    locked = false;
+    boardEl.classList.remove("locked");
+    winBanner.classList.remove("show");
+    winBanner.style.background = "";
+    refreshCells();
+    updateHintStrike();
+    updateProgress();
+  }
+
+  // ---- progress + timer -----------------------------------------------------
+  function updateProgress() {
+    let target = 0, correct = 0;
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++) {
+        if (solution[r][c] === 1) {
+          target++;
+          if (state[r][c] === FILLED) correct++;
+        }
+      }
+    const pct = target === 0 ? 100 : Math.round((correct / target) * 100);
+    document.getElementById("statProgress").textContent = pct + "%";
+  }
+
+  function ensureTimer() {
+    if (!started && !locked) {
+      started = true;
+      startTimer();
+    }
+  }
+  function startTimer() {
+    stopTimer();
+    timer = setInterval(() => { seconds++; updateTime(); }, 1000);
+  }
+  function stopTimer() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+  function updateTime() {
+    document.getElementById("statTime").textContent = formatTime(seconds);
+  }
+  function formatTime(s) {
+    const m = Math.floor(s / 60).toString().padStart(2, "0");
+    const ss = (s % 60).toString().padStart(2, "0");
+    return `${m}:${ss}`;
+  }
+
+  // ---- controls -------------------------------------------------------------
+  document.getElementById("sizeSeg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    document.querySelectorAll("#sizeSeg button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    size = +btn.dataset.size;
+    document.getElementById("statSize").textContent = `${size} × ${size}`;
+    newPuzzle();
+  });
+
+  document.getElementById("newBtn").addEventListener("click", newPuzzle);
+  document.getElementById("checkBtn").addEventListener("click", checkAnswer);
+  document.getElementById("resetBtn").addEventListener("click", resetBoard);
+  document.getElementById("solveBtn").addEventListener("click", showSolution);
+
+  // init
+  newPuzzle();
+})();
+</script>
+</body>
+</html>
