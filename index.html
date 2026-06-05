@@ -222,7 +222,7 @@
 
   <div class="win-banner" id="winBanner">🎉 クリア！ おめでとうございます！</div>
 
-  <footer>ランダム出題ピクロス &middot; 解くと隠れたドット絵が出てきます</footer>
+  <footer>ランダム出題ピクロス &middot; 解くと隠れたドット絵が出てきます &middot; <span id="buildTag">build 4 (touch)</span></footer>
 
 <script>
 (function () {
@@ -464,69 +464,97 @@
     return { td, r: +td.dataset.r, c: +td.dataset.c };
   }
 
-  // Unified pointer handling (mouse + touch + pen). Using Pointer Events avoids
-  // the iOS bug where a tap fires touch events AND synthesized mouse events,
-  // which would toggle a cell twice and cancel each other out.
-  let activePointerId = null;
+  // Input handling. Mouse and touch are handled separately. iOS Safari fires
+  // BOTH touch events and "compatibility" mouse events for a tap, so we paint on
+  // touchstart, preventDefault() to stop scrolling + the synthesized mouse burst,
+  // and additionally ignore mouse events that arrive right after a touch.
   let longPressTimer = null;
   let movedDuringDrag = false;
+  let touchActive = false;
+  let lastTouchEnd = 0;
 
   function clearLongPress() {
     if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
   }
 
-  boardEl.addEventListener("pointerdown", (e) => {
-    if (locked) return;
-    const td = e.target.closest ? e.target.closest(".cell") : null;
-    if (!td) return;
-    e.preventDefault(); // suppress iOS synthesized mouse/click events + scrolling
-    const r = +td.dataset.r, c = +td.dataset.c;
-    activePointerId = e.pointerId;
+  function startPaint(r, c, markGesture) {
     dragging = true;
     movedDuringDrag = false;
     clearLongPress();
-
-    if (e.pointerType === "mouse" && e.button === 2) {
-      // right click → toggle ✕ mark
+    if (markGesture) {
       dragSetValue = (state[r][c] === MARKED) ? EMPTY : MARKED;
-      applyCell(r, c, dragSetValue);
     } else {
-      // left click / touch / pen → toggle fill
       dragSetValue = (state[r][c] === FILLED) ? EMPTY : FILLED;
-      applyCell(r, c, dragSetValue);
-      // touch/pen: press and hold (without moving) to drop a ✕ mark instead
-      if (e.pointerType !== "mouse") {
-        longPressTimer = setTimeout(() => {
-          if (movedDuringDrag || locked) return;
-          state[r][c] = EMPTY;            // undo the quick fill
-          dragSetValue = MARKED;
-          applyCell(r, c, MARKED);
-        }, 400);
-      }
     }
-    try { boardEl.setPointerCapture(e.pointerId); } catch (_) {}
-  });
+    applyCell(r, c, dragSetValue);
+  }
 
-  boardEl.addEventListener("pointermove", (e) => {
-    if (!dragging || e.pointerId !== activePointerId) return;
-    const hit = cellAt(e.clientX, e.clientY);
-    if (!hit) return;
-    if (state[hit.r][hit.c] !== dragSetValue) {
+  function continuePaint(r, c) {
+    if (!dragging) return;
+    if (state[r][c] !== dragSetValue) {
       movedDuringDrag = true;
       clearLongPress();
-      applyCell(hit.r, hit.c, dragSetValue);
+      applyCell(r, c, dragSetValue);
     }
-  });
+  }
 
-  function endPointer(e) {
-    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+  function endPaint() {
     dragging = false;
     dragSetValue = null;
-    activePointerId = null;
     clearLongPress();
   }
-  boardEl.addEventListener("pointerup", endPointer);
-  boardEl.addEventListener("pointercancel", endPointer);
+
+  // ---- touch (mobile) ----
+  boardEl.addEventListener("touchstart", (e) => {
+    if (locked) return;
+    const td = e.target.closest ? e.target.closest(".cell") : null;
+    if (!td) return;
+    e.preventDefault(); // stop scrolling AND the synthesized mouse events
+    touchActive = true;
+    const r = +td.dataset.r, c = +td.dataset.c;
+    startPaint(r, c, false);
+    // press & hold without moving → place a ✕ mark instead
+    longPressTimer = setTimeout(() => {
+      if (movedDuringDrag || locked) return;
+      state[r][c] = EMPTY;
+      dragSetValue = MARKED;
+      applyCell(r, c, MARKED);
+    }, 450);
+  }, { passive: false });
+
+  boardEl.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    const t = e.touches[0];
+    const hit = cellAt(t.clientX, t.clientY);
+    if (hit) continuePaint(hit.r, hit.c);
+    e.preventDefault();
+  }, { passive: false });
+
+  function onTouchEnd() {
+    endPaint();
+    lastTouchEnd = Date.now();
+    setTimeout(() => { touchActive = false; }, 50);
+  }
+  boardEl.addEventListener("touchend", onTouchEnd);
+  boardEl.addEventListener("touchcancel", onTouchEnd);
+
+  // ---- mouse (desktop) ----
+  boardEl.addEventListener("mousedown", (e) => {
+    if (locked) return;
+    if (touchActive || Date.now() - lastTouchEnd < 700) return; // ignore touch-synthesized mouse
+    const td = e.target.closest ? e.target.closest(".cell") : null;
+    if (!td) return;
+    e.preventDefault();
+    startPaint(+td.dataset.r, +td.dataset.c, e.button === 2);
+  });
+
+  boardEl.addEventListener("mousemove", (e) => {
+    if (!dragging || touchActive) return;
+    const hit = cellAt(e.clientX, e.clientY);
+    if (hit) continuePaint(hit.r, hit.c);
+  });
+
+  window.addEventListener("mouseup", () => { if (!touchActive) endPaint(); });
 
   boardEl.addEventListener("contextmenu", (e) => e.preventDefault());
 
