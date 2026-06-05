@@ -149,6 +149,8 @@
     user-select: none;
     position: relative;
     transition: background 0.05s;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
   }
   .cell.filled { background: var(--cell-fill); border-color: var(--cell-fill); }
   .cell.marked::after {
@@ -210,8 +212,8 @@
   </div>
 
   <div class="mode-hint">
-    左クリック: 塗る／消す　・　右クリック: ✕印（空白マーク）<br>
-    ドラッグで連続して塗れます。行・列のヒント数字を満たすように塗りましょう。
+    📱 スマホ: タップで塗る／消す・長押しで✕印　🖱 PC: 左クリックで塗る・右クリックで✕印<br>
+    なぞって連続塗りもできます。行・列のヒント数字を満たすように塗りましょう。
   </div>
 
   <div class="board-wrap">
@@ -455,72 +457,78 @@
     checkWin();
   }
 
-  function cellFromEvent(e) {
-    const td = e.target.closest(".cell");
-    if (!td) return null;
+  function cellAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const td = el && el.closest ? el.closest(".cell") : null;
+    if (!td || !boardEl.contains(td)) return null;
     return { td, r: +td.dataset.r, c: +td.dataset.c };
   }
 
-  boardEl.addEventListener("mousedown", (e) => {
+  // Unified pointer handling (mouse + touch + pen). Using Pointer Events avoids
+  // the iOS bug where a tap fires touch events AND synthesized mouse events,
+  // which would toggle a cell twice and cancel each other out.
+  let activePointerId = null;
+  let longPressTimer = null;
+  let movedDuringDrag = false;
+
+  function clearLongPress() {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  }
+
+  boardEl.addEventListener("pointerdown", (e) => {
     if (locked) return;
-    const hit = cellFromEvent(e);
-    if (!hit) return;
-    e.preventDefault();
+    const td = e.target.closest ? e.target.closest(".cell") : null;
+    if (!td) return;
+    e.preventDefault(); // suppress iOS synthesized mouse/click events + scrolling
+    const r = +td.dataset.r, c = +td.dataset.c;
+    activePointerId = e.pointerId;
     dragging = true;
-    dragButton = e.button;
-    const cur = state[hit.r][hit.c];
-    if (e.button === 2) {
-      // right click toggles mark
-      dragSetValue = (cur === MARKED) ? EMPTY : MARKED;
+    movedDuringDrag = false;
+    clearLongPress();
+
+    if (e.pointerType === "mouse" && e.button === 2) {
+      // right click → toggle ✕ mark
+      dragSetValue = (state[r][c] === MARKED) ? EMPTY : MARKED;
+      applyCell(r, c, dragSetValue);
     } else {
-      // left click toggles fill
-      dragSetValue = (cur === FILLED) ? EMPTY : FILLED;
+      // left click / touch / pen → toggle fill
+      dragSetValue = (state[r][c] === FILLED) ? EMPTY : FILLED;
+      applyCell(r, c, dragSetValue);
+      // touch/pen: press and hold (without moving) to drop a ✕ mark instead
+      if (e.pointerType !== "mouse") {
+        longPressTimer = setTimeout(() => {
+          if (movedDuringDrag || locked) return;
+          state[r][c] = EMPTY;            // undo the quick fill
+          dragSetValue = MARKED;
+          applyCell(r, c, MARKED);
+        }, 400);
+      }
     }
-    applyCell(hit.r, hit.c, dragSetValue);
+    try { boardEl.setPointerCapture(e.pointerId); } catch (_) {}
   });
 
-  boardEl.addEventListener("mouseover", (e) => {
-    if (!dragging) return;
-    const hit = cellFromEvent(e);
+  boardEl.addEventListener("pointermove", (e) => {
+    if (!dragging || e.pointerId !== activePointerId) return;
+    const hit = cellAt(e.clientX, e.clientY);
     if (!hit) return;
-    applyCell(hit.r, hit.c, dragSetValue);
+    if (state[hit.r][hit.c] !== dragSetValue) {
+      movedDuringDrag = true;
+      clearLongPress();
+      applyCell(hit.r, hit.c, dragSetValue);
+    }
   });
 
-  window.addEventListener("mouseup", () => {
+  function endPointer(e) {
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
     dragging = false;
     dragSetValue = null;
-  });
+    activePointerId = null;
+    clearLongPress();
+  }
+  boardEl.addEventListener("pointerup", endPointer);
+  boardEl.addEventListener("pointercancel", endPointer);
 
   boardEl.addEventListener("contextmenu", (e) => e.preventDefault());
-
-  // touch support (tap to fill, long press to mark)
-  let touchTimer = null;
-  let touchMarked = false;
-  boardEl.addEventListener("touchstart", (e) => {
-    if (locked) return;
-    const t = e.touches[0];
-    const el = document.elementFromPoint(t.clientX, t.clientY);
-    const td = el && el.closest ? el.closest(".cell") : null;
-    if (!td) return;
-    const r = +td.dataset.r, c = +td.dataset.c;
-    touchMarked = false;
-    touchTimer = setTimeout(() => {
-      touchMarked = true;
-      const cur = state[r][c];
-      applyCell(r, c, cur === MARKED ? EMPTY : MARKED);
-    }, 350);
-    td._touchRC = { r, c };
-  }, { passive: true });
-
-  boardEl.addEventListener("touchend", (e) => {
-    if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
-    if (touchMarked) { touchMarked = false; return; }
-    const el = e.target.closest ? e.target.closest(".cell") : null;
-    if (!el) return;
-    const r = +el.dataset.r, c = +el.dataset.c;
-    const cur = state[r][c];
-    applyCell(r, c, cur === FILLED ? EMPTY : FILLED);
-  });
 
   // ---- win / hint logic -----------------------------------------------------
   function checkWin() {
